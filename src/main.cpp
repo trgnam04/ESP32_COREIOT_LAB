@@ -8,67 +8,59 @@
 #endif // ESP8266
 
 #include <Arduino_MQTT_Client.h>
-#include <Shared_Attribute_Update.h>
+#include <Server_Side_RPC.h>
 #include <ThingsBoard.h>
+#include <string.h>
 
-
-// Whether the given script is using encryption or not,
-// generally recommended as it increases security (communication with the server is not in clear text anymore),
-// it does come with an overhead tough as having an encrypted session requires a lot of memory,
-// which might not be avaialable on lower end devices.
-#define ENCRYPTED false
+#define LED_PIN 13
 
 
 constexpr char WIFI_SSID[] = "271104E";
 constexpr char WIFI_PASSWORD[] = "1234567890";
 
-// See https://thingsboard.io/docs/getting-started-guides/helloworld/
-// to understand how to obtain an access token
-constexpr char TOKEN[] = "Button1";
+constexpr char TOKEN[] = "Button2";
 
 // Thingsboard we want to establish a connection too
 constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
 
 // MQTT port used to communicate with the server, 1883 is the default unencrypted MQTT port,
 // whereas 8883 would be the default encrypted SSL MQTT port
+#if ENCRYPTED
+constexpr uint16_t THINGSBOARD_PORT = 8883U;
+#else
 constexpr uint16_t THINGSBOARD_PORT = 1883U;
-
+#endif
 
 // Maximum size packets will ever be sent or received by the underlying MQTT client,
 // if the size is to small messages might not be sent or received messages will be discarded
-constexpr uint16_t MAX_MESSAGE_SEND_SIZE = 128U;
-constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 128U;
+constexpr uint16_t MAX_MESSAGE_SEND_SIZE = 256U;
+constexpr uint16_t MAX_MESSAGE_RECEIVE_SIZE = 256U;
 
-// Baud rate for the debugging serial connection
+// Baud rate for the debugging serial connection.
 // If the Serial output is mangled, ensure to change the monitor speed accordingly to this variable
 constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
 
-// Maximum amount of attributs we can request or subscribe, has to be set both in the ThingsBoard template list and Attribute_Request_Callback template list
-// and should be the same as the amount of variables in the passed array. If it is less not all variables will be requested or subscribed
-constexpr size_t MAX_ATTRIBUTES = 1U;
 
+constexpr const char RPC_SWITCH_METHOD[] = "setLedSwitchValue";
+constexpr const char RPC_SWITCH_KEY[] = "Button2";
+constexpr uint8_t MAX_RPC_SUBSCRIPTIONS = 1U;
+constexpr uint8_t MAX_RPC_RESPONSE = 1U;
 
-constexpr char CONNECTING_MSG[] = "Connecting to: (%s) with token (%s)\n";
-constexpr const char LED_STATE_KEY[] = "Led_State";
-
+volatile bool button_state = false;
 
 // Initialize underlying client, used to establish a connection
-#if ENCRYPTED
-WiFiClientSecure espClient;
-#else
 WiFiClient espClient;
-#endif
 // Initalize the Mqtt client instance
 Arduino_MQTT_Client mqttClient(espClient);
 // Initialize used apis
-Shared_Attribute_Update<1U, MAX_ATTRIBUTES> shared_update;
+Server_Side_RPC<MAX_RPC_SUBSCRIPTIONS, MAX_RPC_RESPONSE> rpc;
 const std::array<IAPI_Implementation*, 1U> apis = {
-    &shared_update
+    &rpc
 };
 // Initialize ThingsBoard instance with the maximum needed buffer size
 ThingsBoard tb(mqttClient, MAX_MESSAGE_RECEIVE_SIZE, MAX_MESSAGE_SEND_SIZE, Default_Max_Stack_Size, apis);
 
-// Statuses for subscribing to shared attributes
+// Statuses for subscribing to rpc
 bool subscribed = false;
 
 
@@ -84,16 +76,13 @@ void InitWiFi() {
     Serial.print(".");
   }
   Serial.println("Connected to AP");
-#if ENCRYPTED
-  espClient.setCACert(ROOT_CERT);
-#endif
 }
 
 /// @brief Reconnects the WiFi uses InitWiFi if the connection has been removed
 /// @return Returns true as soon as a connection has been established again
 bool reconnect() {
   // Check to ensure we aren't connected yet
-  const wl_status_t status = WiFi.status();
+const wl_status_t status = WiFi.status();
   if (status == WL_CONNECTED) {
     return true;
   }
@@ -103,20 +92,21 @@ bool reconnect() {
   return true;
 }
 
-/// @brief Update callback that will be called as soon as one of the provided shared attributes changes value,
-/// if none are provided we subscribe to any shared attribute change instead
-/// @param data Data containing the shared attributes that were changed and their current value
-void processSharedAttributeUpdate(const JsonObjectConst &data) {
-  for (auto it = data.begin(); it != data.end(); ++it) {
-    Serial.println(it->key().c_str());
-    // Shared attributes have to be parsed by their type.
-    Serial.println(it->value().as<const char*>());
-  }
 
-  const size_t jsonSize = Helper::Measure_Json(data);
-  char buffer[jsonSize];
-  serializeJson(data, buffer, jsonSize);
-  Serial.println(buffer);  
+void processSwitchChange(const JsonVariantConst &data, JsonDocument &response) {
+  Serial.println("Received the set switch method");
+
+  // Lấy trạng thái switch từ JSON
+  bool switch_state = data.as<String>() == "true" ? 1 : 0;
+
+  // Cập nhật trạng thái nút bấm (button_state là biến toàn cục)
+  button_state = switch_state;
+
+  Serial.print("Example switch state: ");
+  Serial.println(button_state ? "ON" : "OFF");
+
+  // Phản hồi trạng thái LED  
+  response["LedState"] = switch_state;
 }
 
 void setup() {
@@ -129,6 +119,8 @@ void setup() {
 void loop() {
   delay(1000);
 
+  digitalWrite(LED_PIN, button_state ? HIGH : LOW);
+
   if (!reconnect()) {
     return;
   }
@@ -136,7 +128,7 @@ void loop() {
   if (!tb.connected()) {
     // Reconnect to the ThingsBoard server,
     // if a connection was disrupted or has not yet been established
-    Serial.printf(CONNECTING_MSG, THINGSBOARD_SERVER, TOKEN);
+    Serial.printf("Connecting to: (%s) with token (%s)\n", THINGSBOARD_SERVER, TOKEN);
     if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
       Serial.println("Failed to connect");
       return;
@@ -144,12 +136,14 @@ void loop() {
   }
 
   if (!subscribed) {
-    Serial.println("Subscribing for shared attribute updates...");
-    // Shared attributes we want to request from the server
-    constexpr std::array<const char*, MAX_ATTRIBUTES> SUBSCRIBED_SHARED_ATTRIBUTES = {LED_STATE_KEY};
-    const Shared_Attribute_Callback<MAX_ATTRIBUTES> callback(&processSharedAttributeUpdate, SUBSCRIBED_SHARED_ATTRIBUTES);
-    if (!shared_update.Shared_Attributes_Subscribe(callback)) {
-      Serial.println("Failed to subscribe for shared attribute updates");
+    Serial.println("Subscribing for RPC...");
+    const std::array<RPC_Callback, MAX_RPC_SUBSCRIPTIONS> callbacks = {
+       // Internal size can be 0, because if we use the JsonDocument as a JsonVariant and then set the value we do not require additional memory
+      RPC_Callback{ RPC_SWITCH_METHOD,         processSwitchChange }
+    };
+    
+    if (!rpc.RPC_Subscribe(callbacks.cbegin(), callbacks.cend())) {
+      Serial.println("Failed to subscribe for RPC");
       return;
     }
 
@@ -157,7 +151,7 @@ void loop() {
     subscribed = true;
   }
 
-  Attribute attribute[MAX_ATTRIBUTES] = {{LED_STATE_KEY, true}};
+
 
   tb.loop();
 }
