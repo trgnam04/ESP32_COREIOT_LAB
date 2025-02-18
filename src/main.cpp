@@ -95,25 +95,21 @@ const wl_status_t status = WiFi.status();
 
 void processGetInitiateState(const JsonVariantConst &data, JsonDocument &response) {
   Serial.println("Received the get Initiate State");
-
-  response.set(true);
+  bool currState = digitalRead(LED_PIN);
+  response.set(currState);
 }
 
 
 void processSwitchChange(const JsonVariantConst &data, JsonDocument &response) {
   Serial.println("Received the set switch method");
-
-  // Lấy trạng thái switch từ JSON
+  
   bool switch_state = data.as<String>() == "true" ? 1 : 0;
-
-  // Cập nhật trạng thái nút bấm (button_state là biến toàn cục)
   button_state = switch_state;
 
   Serial.print("Example switch state: ");
   Serial.println(button_state ? "ON" : "OFF");
 
-  // Phản hồi trạng thái LED  
-  response["LedState"] = switch_state;
+  digitalWrite(LED_PIN, button_state);  
 }
 
 void setup() {
