@@ -42,9 +42,10 @@ constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
 
 
 constexpr const char RPC_SWITCH_METHOD[] = "setLedSwitchValue";
+constexpr const char RPC_GET_STATE_METHOD[] = "getInitiateState";
 constexpr const char RPC_SWITCH_KEY[] = "Button2";
-constexpr uint8_t MAX_RPC_SUBSCRIPTIONS = 1U;
-constexpr uint8_t MAX_RPC_RESPONSE = 1U;
+constexpr uint8_t MAX_RPC_SUBSCRIPTIONS = 2U;
+constexpr uint8_t MAX_RPC_RESPONSE = 2U;
 
 volatile bool button_state = false;
 
@@ -90,6 +91,12 @@ const wl_status_t status = WiFi.status();
   // If we aren't establish a new connection to the given WiFi network
   InitWiFi();
   return true;
+}
+
+void processGetInitiateState(const JsonVariantConst &data, JsonDocument &response) {
+  Serial.println("Received the get Initiate State");
+
+  response.set(true);
 }
 
 
@@ -139,7 +146,8 @@ void loop() {
     Serial.println("Subscribing for RPC...");
     const std::array<RPC_Callback, MAX_RPC_SUBSCRIPTIONS> callbacks = {
        // Internal size can be 0, because if we use the JsonDocument as a JsonVariant and then set the value we do not require additional memory
-      RPC_Callback{ RPC_SWITCH_METHOD,         processSwitchChange }
+      RPC_Callback{ RPC_SWITCH_METHOD,         processSwitchChange },
+      RPC_Callback{ RPC_GET_STATE_METHOD,      processGetInitiateState}
     };
     
     if (!rpc.RPC_Subscribe(callbacks.cbegin(), callbacks.cend())) {
