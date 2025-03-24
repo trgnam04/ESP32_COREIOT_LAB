@@ -112,6 +112,7 @@ void processSwitchChange(const JsonVariantConst &data, JsonDocument &response) {
   digitalWrite(LED_PIN, button_state);  
 }
 
+
 void setup() {
   // Initalize serial connection for debugging
   Serial.begin(SERIAL_DEBUG_BAUD);
@@ -152,7 +153,7 @@ void loop() {
     }
 
     Serial.println("Subscribe done");
-    subscribed = true;
+    subscribed = true;    
   }
 
 
