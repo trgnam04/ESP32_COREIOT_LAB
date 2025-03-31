@@ -215,7 +215,7 @@ void setup() {
 
 void loop() {
   delay(1000);
-  
+  Serial.println("Hello this is from New Version");
 
   if (!reconnect()) {
     return;
